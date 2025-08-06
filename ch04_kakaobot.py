@@ -70,7 +70,7 @@ def getTextFromGPT(messages):
         {"role": "user", "content": messages}
     ]
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         messages=messages_prompt
     )
     return response.choices[0].message.content
