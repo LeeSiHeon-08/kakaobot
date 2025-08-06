@@ -10,6 +10,7 @@ import os
 import os
 
 API_KEY = os.getenv("OPENAI_API_KEY")
+print("✅ API KEY:", repr(API_KEY))
 if not API_KEY:
     raise ValueError("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
 
