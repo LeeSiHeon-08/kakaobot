@@ -10,7 +10,10 @@ import os
 import os
 
 API_KEY = os.getenv("OPENAI_API_KEY")
-print(f"✅ API KEY: '{API_KEY}'")
+
+print("ENV VARS:", os.environ)
+print("OPENAI_API_KEY:", os.getenv("OPENAI_API_KEY"))
+
 
 
 if not API_KEY:
