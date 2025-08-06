@@ -7,7 +7,7 @@ import queue as q
 import os
 
 # ✅ OpenAI API Key 설정
-API_KEY = "-proj-CkQZgKQqxEV_wnHfnVigP82rWeoHzbLsnOPb0ZP51d11HTV4Tt5PF8eOYQedDEE2jT0ZY1GBs1T3BlbkFJmH14VEB0p8ID9C8uwItktD6-xua09eGEMYj3kfeSSY98QNuP5rXL9P6-5tmEZ68gwM4tkohjIA"
+API_KEY = os.getenv("OPENAI_API_KEY")
 client = openai.OpenAI(api_key=API_KEY)
 
 ###### 응답 형식 함수들 ######
