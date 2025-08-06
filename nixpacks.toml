@@ -1,4 +1,3 @@
 [start]
 cmd = "uvicorn ch04_kakaobot:app --host 0.0.0.0 --port 8000"
-[variables]
-OPENAI_API_KEY = "$OPENAI_API_KEY"
+
