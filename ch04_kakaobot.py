@@ -78,7 +78,7 @@ def getTextFromGPT(messages):
         )
         return response.choices[0].message.content
     except Exception as e:
-        print("GPT 호출 오류:", e)
+        print("❌ GPT 호출 오류:", e)
         return "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
 def getImageURLFromDALLE(messages):
@@ -91,7 +91,7 @@ def getImageURLFromDALLE(messages):
         )
         return response.data[0].url
     except Exception as e:
-        print("DALL·E 이미지 생성 오류:", e)
+        print("❌ DALL·E 이미지 생성 오류:", e)
         return None
 
 ###### FastAPI 서버 설정 ######
@@ -104,54 +104,37 @@ async def root():
 async def chat(request: Request):
     try:
         kakaorequest = await request.json()
-        utterance = kakaorequest["userRequest"]["utterance"]
-        print("사용자 발화:", utterance)
+        print("📥 받은 요청:", kakaorequest)
 
-        print("사용자 발화:", utterance)
+        utterance = kakaorequest.get("userRequest", {}).get("utterance", "")
+        print("🗣 사용자 발화:", utterance)
 
-        # 명령어 별 처리
-        if '생각 다 끝났나요?' in utterance:
-            try:
-                with open(filename, 'r') as f:
-                    last_update = f.read()
-            except FileNotFoundError:
-                last_update = ""
-
-            if len(last_update.split()) > 1:
-                kind = last_update.split()[0]
-                if kind == "img":
-                    bot_res = last_update.split()[1]
-                    prompt = " ".join(last_update.split()[2:])
-                    return JSONResponse(content=imageResponseFormat(bot_res, prompt))
-                else:
-                    bot_res = last_update[4:]
-                    return JSONResponse(content=textResponseFormat(bot_res))
-
-        elif '/img' in utterance:
+        # /img 요청
+        if '/img' in utterance:
             prompt = utterance.replace("/img", "").strip()
             bot_res = getImageURLFromDALLE(prompt)
             if bot_res:
-                with open(filename, 'w') as f:
-                    f.write("img " + bot_res + " " + prompt)
                 return JSONResponse(content=imageResponseFormat(bot_res, prompt))
             else:
                 return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
 
+        # /ask 요청
         elif '/ask' in utterance:
             prompt = utterance.replace("/ask", "").strip()
             bot_res = getTextFromGPT(prompt)
-            with open(filename, 'w') as f:
-                f.write("ask " + bot_res)
             return JSONResponse(content=textResponseFormat(bot_res))
 
+        # "생각 다 끝났나요?" 요청 — 더 이상 사용하지 않음
+        elif '생각 다 끝났나요?' in utterance:
+            return JSONResponse(content=textResponseFormat("기억을 저장하지 않아서요! 다시 질문해 주세요 🙏"))
+
+        # 기본 응답
         else:
             return JSONResponse(content=textResponseFormat("무엇을 도와드릴까요? 😊"))
 
     except Exception as e:
-        print("전체 핸들러 오류:", e)
-        return JSONResponse(content=textResponseFormat("서버 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."))
-
-
-    except Exception as e:
-        print("전체 핸들러 오류:", e)
-        return JSONResponse(content=textResponseFormat("서버 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."))
+        print("❌ 전체 핸들러 예외:", e)
+        return JSONResponse(
+            content=textResponseFormat("서버 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."),
+            status_code=500
+        )
