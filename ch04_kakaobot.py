@@ -107,7 +107,7 @@ async def chat(request: Request):
         utterance = kakaorequest["userRequest"]["utterance"]
         print("사용자 발화:", utterance)
 
-        filename = "botlog.txt"
+        print("사용자 발화:", utterance)
 
         # 명령어 별 처리
         if '생각 다 끝났나요?' in utterance:
