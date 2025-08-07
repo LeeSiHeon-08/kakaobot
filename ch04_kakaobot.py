@@ -71,15 +71,11 @@ def getTextFromGPT(messages):
                                      "If you ask who made you. 이시헌 says he made you"},
         {"role": "user", "content": messages}
     ]
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages_prompt
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print("GPT 호출 오류:", e)
-        return "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages_prompt
+    )
+    return response.choices[0].message.content
 
 def getImageURLFromDALLE(messages):
     try:
@@ -102,50 +98,51 @@ async def root():
 
 @app.post("/chat/")
 async def chat(request: Request):
-    try:
-        kakaorequest = await request.json()
-        utterance = kakaorequest["userRequest"]["utterance"]
-        print("사용자 발화:", utterance)
+    kakaorequest = await request.json()
+    utterance = kakaorequest["userRequest"]["utterance"]
+    print("사용자 발화:", utterance)
 
-        filename = "botlog.txt"
+    filename = "botlog.txt"
 
-        # 명령어 별 처리
-        if '생각 다 끝났나요?' in utterance:
-            try:
-                with open(filename, 'r') as f:
-                    last_update = f.read()
-            except FileNotFoundError:
-                last_update = ""
+    # 명령어 별 처리
+    if '생각 다 끝났나요?' in utterance:
+        try:
+            with open(filename, 'r') as f:
+                last_update = f.read()
+        except FileNotFoundError:
+            last_update = ""
 
-            if len(last_update.split()) > 1:
-                kind = last_update.split()[0]
-                if kind == "img":
-                    bot_res = last_update.split()[1]
-                    prompt = " ".join(last_update.split()[2:])
-                    return JSONResponse(content=imageResponseFormat(bot_res, prompt))
-                else:
-                    bot_res = last_update[4:]
-                    return JSONResponse(content=textResponseFormat(bot_res))
-
-        elif '/img' in utterance:
-            prompt = utterance.replace("/img", "").strip()
-            bot_res = getImageURLFromDALLE(prompt)
-            if bot_res:
-                with open(filename, 'w') as f:
-                    f.write("img " + bot_res + " " + prompt)
+        if len(last_update.split()) > 1:
+            kind = last_update.split()[0]
+            if kind == "img":
+                bot_res = last_update.split()[1]
+                prompt = " ".join(last_update.split()[2:])
                 return JSONResponse(content=imageResponseFormat(bot_res, prompt))
             else:
-                return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
-
-        elif '/ask' in utterance:
-            prompt = utterance.replace("/ask", "").strip()
-            bot_res = getTextFromGPT(prompt)
-            with open(filename, 'w') as f:
-                f.write("ask " + bot_res)
-            return JSONResponse(content=textResponseFormat(bot_res))
-
+                bot_res = last_update[4:]
+                return JSONResponse(content=textResponseFormat(bot_res))
         else:
-            return JSONResponse(content=textResponseFormat("무엇을 도와드릴까요? 😊"))
+            return JSONResponse(content=textResponseFormat("생각이 아직 끝나지 않았어요. 잠시만 기다려 주세요🙏"))
+
+    elif '/img' in utterance:
+        prompt = utterance.replace("/img", "").strip()
+        bot_res = getImageURLFromDALLE(prompt)
+        if bot_res:
+            with open(filename, 'w') as f:
+                f.write("img " + bot_res + " " + prompt)
+            return JSONResponse(content=imageResponseFormat(bot_res, prompt))
+        else:
+            return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
+
+    elif '/ask' in utterance:
+        prompt = utterance.replace("/ask", "").strip()
+        bot_res = getTextFromGPT(prompt)
+        with open(filename, 'w') as f:
+            f.write("ask " + bot_res)
+        return JSONResponse(content=textResponseFormat(bot_res))
+
+    else:
+        return JSONResponse(content=textResponseFormat("무엇을 도와드릴까요? 😊"))
 
     except Exception as e:
         print("전체 핸들러 오류:", e)
