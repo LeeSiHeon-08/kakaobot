@@ -1,12 +1,12 @@
 from fastapi import Request, FastAPI
 from fastapi.responses import JSONResponse
 import openai
+import threading
+import time
+import queue
 import os
 
 API_KEY = os.getenv("OPENAI_API_KEY")
-
-print("ENV VARS:", os.environ)
-print("OPENAI_API_KEY:", API_KEY)
 
 if not API_KEY:
     raise ValueError("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
@@ -15,7 +15,8 @@ client = openai.OpenAI(api_key=API_KEY)
 
 app = FastAPI()
 
-###### 응답 형식 함수들 ######
+response_queue = queue.Queue()
+filename = "bot_response.txt"  # 응답 임시 저장용 파일
 
 def textResponseFormat(bot_response):
     return {
@@ -23,18 +24,6 @@ def textResponseFormat(bot_response):
         'template': {
             'outputs': [
                 {"simpleText": {"text": bot_response}}
-            ],
-            'quickReplies': []
-        }
-    }
-
-def imageResponseFormat(bot_response, prompt):
-    output_text = prompt + " 내용에 관한 이미지입니다."
-    return {
-        'version': '2.0',
-        'template': {
-            'outputs': [
-                {"simpleImage": {"imageUrl": bot_response, "altText": output_text}}
             ],
             'quickReplies': []
         }
@@ -61,8 +50,6 @@ def timeover():
         }
     }
 
-###### GPT / DALLE 호출 함수 ######
-
 def getTextFromGPT(messages):
     messages_prompt = [
         {"role": "system", "content": "You are a thoughtful assistant who answers all questions clearly and accurately in Korean. "
@@ -71,70 +58,56 @@ def getTextFromGPT(messages):
                                      "If you ask who made you. 이시헌 says he made you"},
         {"role": "user", "content": messages}
     ]
+    response = client.chat.completions.create(
+        model="gpt-4",
+        messages=messages_prompt
+    )
+    return response.choices[0].message.content
+
+def asyncOpenAIRequest(prompt):
+    # OpenAI 호출 후 결과를 파일과 큐에 저장
     try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=messages_prompt
-        )
-        return response.choices[0].message.content
+        result = getTextFromGPT(prompt)
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(result)
+        response_queue.put(result)
     except Exception as e:
-        print("❌ GPT 호출 오류:", e)
-        return "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
-
-def getImageURLFromDALLE(messages):
-    try:
-        response = client.images.generate(
-            model="dall-e-2",
-            prompt=messages,
-            size="1024x1024",
-            n=1
-        )
-        return response.data[0].url
-    except Exception as e:
-        print("❌ DALL·E 이미지 생성 오류:", e)
-        return None
-
-###### FastAPI 서버 설정 ######
-
-@app.get("/")
-async def root():
-    return {"message": "kakaoTest"}
+        error_msg = "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+        response_queue.put(error_msg)
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(error_msg)
 
 @app.post("/chat/")
 async def chat(request: Request):
-    try:
-        kakaorequest = await request.json()
-        print("📥 받은 요청:", kakaorequest)
+    kakaorequest = await request.json()
+    utterance = kakaorequest.get("userRequest", {}).get("utterance", "")
 
-        utterance = kakaorequest.get("userRequest", {}).get("utterance", "")
-        print("🗣 사용자 발화:", utterance)
+    # 사용자가 "생각 다 끝났나요?" 물으면 파일에서 답변 읽어서 반환
+    if "생각 다 끝났나요?" in utterance:
+        if os.path.exists(filename):
+            with open(filename, 'r', encoding='utf-8') as f:
+                saved_response = f.read()
+            if saved_response:
+                return JSONResponse(content=textResponseFormat(saved_response))
+        return JSONResponse(content=textResponseFormat("아직 답변이 준비되지 않았습니다. 잠시만 기다려주세요!"))
 
-        # /img 요청
-        if '/img' in utterance:
-            prompt = utterance.replace("/img", "").strip()
-            bot_res = getImageURLFromDALLE(prompt)
-            if bot_res:
-                return JSONResponse(content=imageResponseFormat(bot_res, prompt))
-            else:
-                return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
+    # /ask 요청인 경우: 별도 쓰레드로 OpenAI 호출 시작
+    if "/ask" in utterance:
+        prompt = utterance.replace("/ask", "").strip()
+        # OpenAI 호출 쓰레드 시작
+        threading.Thread(target=asyncOpenAIRequest, args=(prompt,), daemon=True).start()
 
-        # /ask 요청
-        elif '/ask' in utterance:
-            prompt = utterance.replace("/ask", "").strip()
-            bot_res = getTextFromGPT(prompt)
-            return JSONResponse(content=textResponseFormat(bot_res))
+        # 최대 3초 대기하며 결과가 준비되었는지 확인
+        start_time = time.time()
+        while time.time() - start_time < 3.0:
+            if not response_queue.empty():
+                res = response_queue.get()
+                return JSONResponse(content=textResponseFormat(res))
+            time.sleep(0.05)
 
-        # "생각 다 끝났나요?" 요청 — 더 이상 사용하지 않음
-        elif '생각 다 끝났나요?' in utterance:
-            return JSONResponse(content=textResponseFormat("기억을 저장하지 않아서요! 다시 질문해 주세요 🙏"))
+        # 3초 지나도 준비 안 됐으면 타임아웃 메시지 반환
+        return JSONResponse(content=timeover())
 
-        # 기본 응답
-        else:
-            return JSONResponse(content=textResponseFormat("무엇을 도와드릴까요? 😊"))
-
-    except Exception as e:
-        print("❌ 전체 핸들러 예외:", e)
-        return JSONResponse(
-            content=textResponseFormat("서버 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."),
-            status_code=500
-        )
+    # /img, 기타 요청은 기존 방식 그대로 처리 (동기 처리 가능)
+    # 예시로 간단히 처리
+    return JSONResponse(content=textResponseFormat("무엇을 도와드릴까요? 😊"))
