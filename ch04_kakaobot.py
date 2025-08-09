@@ -113,13 +113,14 @@ async def chat(request: Request):
         print("🗣 사용자 발화:", utterance)
 
         # /img 요청
-        if '/img' in utterance:
-            prompt = utterance.replace("/img", "").strip()
-            bot_res = getImageURLFromDALLE(prompt)
-            if bot_res:
-                return JSONResponse(content=imageResponseFormat(bot_res, prompt))
-            else:
-                return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
+    if '/img' in utterance:
+    prompt = utterance.replace("/img", "").strip()
+    bot_res = await getImageURLFromDALLE(prompt)  # ← 여기 await 추가
+    if bot_res:
+        return JSONResponse(content=imageResponseFormat(bot_res, prompt))
+    else:
+        return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
+
 
         # /ask 요청
         elif '/ask' in utterance:
