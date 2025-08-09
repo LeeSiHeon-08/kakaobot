@@ -48,7 +48,7 @@ def timeover():
             "outputs": [
                 {
                     "simpleText": {
-                        "text": "아직 제가 생각이 끝나지 않았어요🙏🙏\n잠시후 아래 말풍선을 눌러주세요👆"
+                        "text": "아직 제가 생각이 끝나지 않았어요🙏🙏\n잠시 후 아래 말풍선을 눌러주세요👆"
                     }
                 }
             ],
@@ -83,7 +83,7 @@ async def getTextFromGPT(messages):
         return response.choices[0].message.content
     except Exception as e:
         print("❌ GPT 호출 오류:", e)
-        return "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+        return None
 
 async def getImageURLFromDALLE(messages):
     try:
@@ -128,16 +128,17 @@ async def chat(request: Request):
         # /ask 요청
         elif utterance.startswith("/ask"):
             prompt = utterance.replace("/ask", "").strip()
-            # GPT 호출을 타임아웃과 함께 실행
-            task = asyncio.create_task(getTextFromGPT(prompt))
-            done, pending = await asyncio.wait({task}, timeout=2)
 
-            if not done:
-                # 2초 안에 완료 안되면 "생각중이에요" 발송
+            # GPT 호출을 3.5초 제한으로 실행
+            try:
+                bot_res = await asyncio.wait_for(getTextFromGPT(prompt), timeout=3.5)
+                if bot_res:
+                    return JSONResponse(content=textResponseFormat(bot_res))
+                else:
+                    return JSONResponse(content=textResponseFormat("답변을 불러오는 데 실패했습니다 😢"))
+            except asyncio.TimeoutError:
+                # 3.5초 초과 시 "생각 중" 메시지 반환
                 return JSONResponse(content=timeover())
-
-            bot_res = task.result()
-            return JSONResponse(content=textResponseFormat(bot_res))
 
         # "생각 다 끝났나요?" 요청
         elif '생각 다 끝났나요?' in utterance:
