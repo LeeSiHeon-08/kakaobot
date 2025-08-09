@@ -81,16 +81,13 @@ def getTextFromGPT(messages):
         print("❌ GPT 호출 오류:", e)
         return "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
-async def getImageURLFromDALLE(messages):
+def getImageURLFromDALLE(messages):
     try:
-        dalle_prompt = messages + ", 고품질, 사실적인 스타일, 불필요한 배경 제거"
-        response = await asyncio.to_thread(
-            lambda: client.images.generate(
-                model="dall-e-3",
-                prompt=dalle_prompt,
-                size="1024x1024",
-                n=1
-            )
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=messages,
+            size="1024x1024",
+            n=1
         )
         return response.data[0].url
     except Exception as e:
@@ -113,14 +110,13 @@ async def chat(request: Request):
         print("🗣 사용자 발화:", utterance)
 
         # /img 요청
-    if '/img' in utterance:
-    prompt = utterance.replace("/img", "").strip()
-    bot_res = await getImageURLFromDALLE(prompt)  # ← 여기 await 추가
-    if bot_res:
-        return JSONResponse(content=imageResponseFormat(bot_res, prompt))
-    else:
-        return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
-
+        if '/img' in utterance:
+            prompt = utterance.replace("/img", "").strip()
+            bot_res = getImageURLFromDALLE(prompt)
+            if bot_res:
+                return JSONResponse(content=imageResponseFormat(bot_res, prompt))
+            else:
+                return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
 
         # /ask 요청
         elif '/ask' in utterance:
