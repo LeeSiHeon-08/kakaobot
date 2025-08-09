@@ -2,7 +2,6 @@ from fastapi import Request, FastAPI
 from fastapi.responses import JSONResponse
 import openai
 import os
-import asyncio
 
 API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -48,7 +47,7 @@ def timeover():
             "outputs": [
                 {
                     "simpleText": {
-                        "text": "아직 제가 생각이 끝나지 않았어요🙏🙏\n잠시 후 아래 말풍선을 눌러주세요👆"
+                        "text": "아직 제가 생각이 끝나지 않았어요🙏🙏\n잠시후 아래 말풍선을 눌러주세요👆"
                     }
                 }
             ],
@@ -64,26 +63,23 @@ def timeover():
 
 ###### GPT / DALLE 호출 함수 ######
 
-async def getTextFromGPT(messages):
+def getTextFromGPT(messages):
     messages_prompt = [
         {"role": "system", "content": "You are a thoughtful assistant who answers all questions clearly and accurately in Korean. "
                                      "If the user asks you to speak informally (반말), respond in 반말 style. "
                                      "Keep answers concise but complete. Avoid hallucination and check facts carefully. "
-                                     "If you ask who made you, say 이시헌 made you."},
+                                     "If you ask who made you. 이시헌 says he made you"},
         {"role": "user", "content": messages}
     ]
     try:
-        response = await asyncio.to_thread(
-            lambda: client.chat.completions.create(
-                model="gpt-4o",
-                messages=messages_prompt,
-                max_completion_tokens=500
-            )
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages_prompt
         )
         return response.choices[0].message.content
     except Exception as e:
         print("❌ GPT 호출 오류:", e)
-        return None
+        return "서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
 
 async def getImageURLFromDALLE(messages):
     try:
@@ -113,34 +109,25 @@ async def chat(request: Request):
         kakaorequest = await request.json()
         print("📥 받은 요청:", kakaorequest)
 
-        utterance = kakaorequest.get("userRequest", {}).get("utterance", "").strip()
+        utterance = kakaorequest.get("userRequest", {}).get("utterance", "")
         print("🗣 사용자 발화:", utterance)
 
         # /img 요청
-        if utterance.startswith("/img"):
+        if '/img' in utterance:
             prompt = utterance.replace("/img", "").strip()
-            bot_res = await getImageURLFromDALLE(prompt)
+            bot_res = getImageURLFromDALLE(prompt)
             if bot_res:
                 return JSONResponse(content=imageResponseFormat(bot_res, prompt))
             else:
                 return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
 
         # /ask 요청
-        elif utterance.startswith("/ask"):
+        elif '/ask' in utterance:
             prompt = utterance.replace("/ask", "").strip()
+            bot_res = getTextFromGPT(prompt)
+            return JSONResponse(content=textResponseFormat(bot_res))
 
-            # GPT 호출을 3.5초 제한으로 실행
-            try:
-                bot_res = await asyncio.wait_for(getTextFromGPT(prompt), timeout=3.5)
-                if bot_res:
-                    return JSONResponse(content=textResponseFormat(bot_res))
-                else:
-                    return JSONResponse(content=textResponseFormat("답변을 불러오는 데 실패했습니다 😢"))
-            except asyncio.TimeoutError:
-                # 3.5초 초과 시 "생각 중" 메시지 반환
-                return JSONResponse(content=timeover())
-
-        # "생각 다 끝났나요?" 요청
+        # "생각 다 끝났나요?" 요청 — 더 이상 사용하지 않음
         elif '생각 다 끝났나요?' in utterance:
             return JSONResponse(content=textResponseFormat("기억을 저장하지 않아서요! 다시 질문해 주세요 🙏"))
 
