@@ -73,7 +73,7 @@ def getTextFromGPT(messages):
     ]
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4",
             messages=messages_prompt
         )
         return response.choices[0].message.content
@@ -84,7 +84,7 @@ def getTextFromGPT(messages):
 def getImageURLFromDALLE(messages):
     try:
         response = client.images.generate(
-            model="dall-e-3",
+            model="dall-e-2",
             prompt=messages,
             size="1024x1024",
             n=1
