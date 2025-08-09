@@ -2,20 +2,17 @@ from fastapi import Request, FastAPI
 from fastapi.responses import JSONResponse
 import openai
 import os
+import asyncio
 
 API_KEY = os.getenv("OPENAI_API_KEY")
-
-print("ENV VARS:", os.environ)
-print("OPENAI_API_KEY:", API_KEY)
 
 if not API_KEY:
     raise ValueError("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
 
 client = openai.OpenAI(api_key=API_KEY)
-
 app = FastAPI()
 
-###### 응답 형식 함수들 ######
+# ====== 응답 형식 함수 ======
 
 def textResponseFormat(bot_response):
     return {
@@ -61,7 +58,7 @@ def timeover():
         }
     }
 
-###### GPT / DALLE 호출 함수 ######
+# ====== GPT / DALLE 호출 함수 ======
 
 def getTextFromGPT(messages):
     messages_prompt = [
@@ -73,7 +70,7 @@ def getTextFromGPT(messages):
     ]
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o",
             messages=messages_prompt
         )
         return response.choices[0].message.content
@@ -84,7 +81,7 @@ def getTextFromGPT(messages):
 def getImageURLFromDALLE(messages):
     try:
         response = client.images.generate(
-            model="dall-e-2",
+            model="dall-e-3",
             prompt=messages,
             size="1024x1024",
             n=1
@@ -94,7 +91,23 @@ def getImageURLFromDALLE(messages):
         print("❌ DALL·E 이미지 생성 오류:", e)
         return None
 
-###### FastAPI 서버 설정 ######
+# ====== 전역 캐시 (세션별 결과 저장) ======
+result_cache = {}
+
+# ====== 비동기 처리 함수 ======
+
+async def process_gpt_request(prompt, session_id):
+    result = getTextFromGPT(prompt)
+    result_cache[session_id] = textResponseFormat(result)
+
+async def process_dalle_request(prompt, session_id):
+    img_url = getImageURLFromDALLE(prompt)
+    if img_url:
+        result_cache[session_id] = imageResponseFormat(img_url, prompt)
+    else:
+        result_cache[session_id] = textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢")
+
+# ====== FastAPI 엔드포인트 ======
 
 @app.get("/")
 async def root():
@@ -104,29 +117,30 @@ async def root():
 async def chat(request: Request):
     try:
         kakaorequest = await request.json()
-        print("📥 받은 요청:", kakaorequest)
+        utterance = kakaorequest.get("userRequest", {}).get("utterance", "").strip()
+        session_id = kakaorequest.get("userRequest", {}).get("user", {}).get("id", "")
 
-        utterance = kakaorequest.get("userRequest", {}).get("utterance", "")
         print("🗣 사용자 발화:", utterance)
 
-        # /img 요청
-        if '/img' in utterance:
-            prompt = utterance.replace("/img", "").strip()
-            bot_res = getImageURLFromDALLE(prompt)
-            if bot_res:
-                return JSONResponse(content=imageResponseFormat(bot_res, prompt))
-            else:
-                return JSONResponse(content=textResponseFormat("이미지를 생성하는 데 문제가 발생했어요 😢"))
-
         # /ask 요청
-        elif '/ask' in utterance:
+        if utterance.startswith("/ask"):
             prompt = utterance.replace("/ask", "").strip()
-            bot_res = getTextFromGPT(prompt)
-            return JSONResponse(content=textResponseFormat(bot_res))
+            asyncio.create_task(process_gpt_request(prompt, session_id))
+            return JSONResponse(content=timeover())
 
-        # "생각 다 끝났나요?" 요청 — 더 이상 사용하지 않음
+        # /img 요청
+        elif utterance.startswith("/img"):
+            prompt = utterance.replace("/img", "").strip()
+            asyncio.create_task(process_dalle_request(prompt, session_id))
+            return JSONResponse(content=timeover())
+
+        # "생각 다 끝났나요?" 요청
         elif '생각 다 끝났나요?' in utterance:
-            return JSONResponse(content=textResponseFormat("기억을 저장하지 않아서요! 다시 질문해 주세요 🙏"))
+            result = result_cache.pop(session_id, None)
+            if result:
+                return JSONResponse(content=result)
+            else:
+                return JSONResponse(content=textResponseFormat("아직 결과가 준비되지 않았어요 😢"))
 
         # 기본 응답
         else:
