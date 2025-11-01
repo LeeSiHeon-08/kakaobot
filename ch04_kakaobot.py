@@ -304,7 +304,7 @@ async def chat(request: Request):
             menu = get_meal(ymd)
             return JSONResponse(kakao_text(f"🍽️ 내일 급식 ({ymd}):\n{menu}", quick=True))
 
-        # ---------- 시간표(기본: 2학년 '전체') ----------
+        # ---------- 시간표(기본: GRADE 학년 '전체') ----------
         if utter in ("시간표", "오늘 시간표"):
             ymd = datetime.now().strftime("%Y%m%d")
             grouped = get_timetable_grade(ymd, AY, SEM, GRADE)
@@ -320,7 +320,7 @@ async def chat(request: Request):
                 text += f"\n\n(목록이 길어 일부만 표시됨 · \"{GRADE}학년 11반\"처럼 반을 입력하면 해당 반만 보여드려요)"
             return JSONResponse(kakao_text(text, quick=True))
 
-        # ---------- 특정 반: "2학년 8반" 같은 패턴 ----------
+        # ---------- 특정 반: "2학년 8반" ----------
         if utter.startswith(f"{GRADE}학년 ") and utter.endswith("반"):
             ymd = datetime.now().strftime("%Y%m%d")
             num = re.sub(r"[^0-9]", "", utter)
@@ -345,55 +345,48 @@ async def chat(request: Request):
                 lines.append(f"{ds}  {name}" + (f" — {desc}" if desc else ""))
             return JSONResponse(kakao_text("📅 이번 주 학사일정\n" + "\n".join(lines), quick=True))
 
-        # ---------- OpenAI (/ask, /img) ----------
-      if utter.startswith("/ask"):
-    prompt = utter.replace("/ask", "", 1).strip()
+        # ---------- /ask: 키워드 포함 시 NEIS 직접 처리 ----------
+        if utter.startswith("/ask"):
+            prompt = utter.replace("/ask", "", 1).strip()
 
-    # /ask 안에 "급식", "시간표", "일정" 같은 단어가 있으면 실제 NEIS 데이터로 처리
-    if "급식" in prompt:
-        ymd = datetime.now().strftime("%Y%m%d")
-        menu = get_meal(ymd)
-        return JSONResponse(kakao_text(f"🍽️ 오늘 급식 ({ymd}):\n{menu}", quick=True))
+            if "급식" in prompt:
+                ymd = datetime.now().strftime("%Y%m%d")
+                menu = get_meal(ymd)
+                return JSONResponse(kakao_text(f"🍽️ 오늘 급식 ({ymd}):\n{menu}", quick=True))
 
-    if "시간표" in prompt:
-        ymd = datetime.now().strftime("%Y%m%d")
-        grouped = get_timetable_grade(ymd, AY, SEM, GRADE)
-        if not grouped:
-            return JSONResponse(kakao_text(f"오늘 {GRADE}학년 시간표 데이터가 없습니다.", quick=True))
-        order = sorted(grouped.keys(), key=lambda x: int(re.sub(r"[^0-9]", "", x) or "0"))
-        blocks: List[str] = []
-        for cls in order:
-            items = " / ".join([f"{p}교시 {s}" for p, s in grouped[cls]])
-            blocks.append(f"{cls}반) {items}")
-        text = f"⏰ 오늘 {GRADE}학년 전체 시간표\n" + "\n".join(blocks)
-        if len(blocks) > 10:
-            text += f"\n\n(목록이 길어 일부만 표시됨 · \"{GRADE}학년 11반\"처럼 반을 입력하면 해당 반만 보여드려요)"
-        return JSONResponse(kakao_text(text, quick=True))
+            if "시간표" in prompt:
+                ymd = datetime.now().strftime("%Y%m%d")
+                grouped = get_timetable_grade(ymd, AY, SEM, GRADE)
+                if not grouped:
+                    return JSONResponse(kakao_text(f"오늘 {GRADE}학년 시간표 데이터가 없습니다.", quick=True))
+                order = sorted(grouped.keys(), key=lambda x: int(re.sub(r"[^0-9]", "", x) or "0"))
+                blocks: List[str] = []
+                for cls in order:
+                    items = " / ".join([f"{p}교시 {s}" for p, s in grouped[cls]])
+                    blocks.append(f"{cls}반) {items}")
+                text = f"⏰ 오늘 {GRADE}학년 전체 시간표\n" + "\n".join(blocks)
+                if len(blocks) > 10:
+                    text += f"\n\n(목록이 길어 일부만 표시됨 · \"{GRADE}학년 11반\"처럼 반을 입력하면 해당 반만 보여드려요)"
+                return JSONResponse(kakao_text(text, quick=True))
 
-    if "일정" in prompt:
-        today = datetime.now()
-        start = (today - timedelta(days=today.weekday())).strftime("%Y%m%d")
-        end   = (today + timedelta(days=(6 - today.weekday()))).strftime("%Y%m%d")
-        events = get_schedule(start, end)
-        if not events:
-            return JSONResponse(kakao_text("이번 주 학사일정이 없습니다.", quick=True))
-        lines: List[str] = []
-        for d, name, desc in events[:12]:
-            ds = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 else d
-            lines.append(f"{ds}  {name}" + (f" — {desc}" if desc else ""))
-        return JSONResponse(kakao_text("📅 이번 주 학사일정\n" + "\n".join(lines), quick=True))
+            if "일정" in prompt:
+                today = datetime.now()
+                start = (today - timedelta(days=today.weekday())).strftime("%Y%m%d")
+                end   = (today + timedelta(days=(6 - today.weekday()))).strftime("%Y%m%d")
+                events = get_schedule(start, end)
+                if not events:
+                    return JSONResponse(kakao_text("이번 주 학사일정이 없습니다.", quick=True))
+                lines: List[str] = []
+                for d, name, desc in events[:12]:
+                    ds = f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d) == 8 else d
+                    lines.append(f"{ds}  {name}" + (f" — {desc}" if desc else ""))
+                return JSONResponse(kakao_text("📅 이번 주 학사일정\n" + "\n".join(lines), quick=True))
 
-    # 그 외의 /ask 는 GPT로 넘김
-    asyncio.create_task(asyncio.wait_for(process_gpt_async(prompt, session_id), timeout=ASYNC_TIMEOUT))
-    return JSONResponse(timeover())
-
-
-        if utter.startswith("/img"):
-            prompt = utter.replace("/img", "", 1).strip()
-            asyncio.create_task(asyncio.wait_for(process_img_async(prompt, session_id), timeout=ASYNC_TIMEOUT))
+            # 그 외의 /ask 는 GPT로 비동기 처리
+            asyncio.create_task(asyncio.wait_for(process_gpt_async(prompt, session_id), timeout=ASYNC_TIMEOUT))
             return JSONResponse(timeover())
 
-        # ---------- polling ----------
+        # ---------- 비동기 폴링 ----------
         if "생각 다 끝났나요?" in utter:
             async with cache_lock:
                 result = result_cache.pop(session_id, None)
@@ -401,11 +394,13 @@ async def chat(request: Request):
                 return JSONResponse(result)
             return JSONResponse(kakao_text("아직 결과가 준비되지 않았어요 😢 잠시 후 다시 눌러 주세요.", quick=True))
 
-        # ---------- default ----------
-        return JSONResponse(kakao_text(
-            f"무엇을 도와드릴까요? 😊\n(예: 급식 / 시간표({GRADE}학년 전체) / {GRADE}학년 3반 / 일정 /ask 질문 /img 프롬프트)",
-            quick=True
-        ))
+        # ---------- 기본 안내 ----------
+        return JSONResponse(
+            kakao_text(
+                f"무엇을 도와드릴까요? 😊\n(예: 급식 / 시간표({GRADE}학년 전체) / {GRADE}학년 3반 / 일정 /ask 질문 /img 프롬프트)",
+                quick=True
+            )
+        )
 
     except asyncio.TimeoutError:
         return JSONResponse(kakao_text("응답이 지연되고 있어요. 잠시 후 다시 시도해주세요.", quick=True))
