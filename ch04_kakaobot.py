@@ -377,7 +377,7 @@ async def chat(request: Request):
             asyncio.create_task(asyncio.wait_for(process_img_async(prompt, session_id), timeout=ASYNC_TIMEOUT))
             return JSONResponse(timeover())
 
-        if "생각 다 끝났나요?" in utter:
+               if "생각 다 끝났나요?" in utter:
             async with cache_lock:
                 result = result_cache.pop(session_id, None)
             if result:
@@ -385,15 +385,19 @@ async def chat(request: Request):
             return JSONResponse(kakao_text("아직 결과가 준비되지 않았어요 😢 잠시 후 다시 눌러 주세요.", quick=True))
 
         # 기본 안내
-        return JSONResponse(kakao_text(
-            "무엇을 도와드릴까요? 😊\n(예: 급식 / 시간표 / 2학년 전체 시간표 / 일정 / 2학년 3반 /ask 질문 /img 프롬프트)",
-            quick=True
-        ))
+        return JSONResponse(
+            kakao_text(
+                "무엇을 도와드릴까요? 😊\n(예: 급식 / 시간표 / 2학년 전체 시간표 / 일정 / 2학년 3반 /ask 질문 /img 프롬프트)",
+                quick=True
+            )
+        )
 
     except asyncio.TimeoutError:
         return JSONResponse(kakao_text("응답이 지연되고 있어요. 잠시 후 다시 시도해주세요.", quick=True))
+
     except Exception as e:
         print("❌ 핸들러 예외:", e)
-        return JSONResponse(kakao_text("서버 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."), status_code=500)
-
+        return JSONResponse(
+            kakao_text("서버 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."),
+            status_code=500
         )
