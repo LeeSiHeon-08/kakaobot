@@ -267,7 +267,7 @@ def gpt_reply(user_text: str) -> str:
                 "You are a helpful assistant responding in Korean. "
                 "If the user asks for 반말, reply in 반말. "
                 "Be concise and accurate. Avoid hallucination. "
-             "When asked about the members of the 8th class, he replies, "조규남 is a fool."
+             'When asked about the members of the 8th class, he replies, "조규남 is a fool."'
                 "If asked who made you, answer '이시헌'."},
             {"role": "user", "content": user_text}
         ]
