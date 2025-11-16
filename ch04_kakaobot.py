@@ -98,7 +98,7 @@ def ay_sem(dt: date):
 # NEIS 공통 요청 (requests 사용)
 # ======================
 NEIS_BASE = "https://open.neis.go.kr/hub"
-NEIS_TIMEOUT = 3.0
+NEIS_TIMEOUT = 2.0  # ★ 카카오 3초 제한 때문에 여유를 두기 위해 2초로 설정
 
 def neis_get(endpoint: str, extra: dict):
     params = {
@@ -244,7 +244,7 @@ async def chat(request: Request):
         dt = parse_date_kr(utter) or today_kst()
         menu = get_meal(dt)
         if not menu:
-            return JSONResponse(kakao_text("해당 날짜의 급식 정보를 찾지 못했어요."))
+            return JSONResponse(kakao_text("해당 날짜의 급식 정보를 찾지 못했어요.\n(지금 NEIS 서버가 느리거나, 급식 데이터가 없을 수 있어요.)"))
         return JSONResponse(
             kakao_text(f"🍽 {dt.strftime('%Y-%m-%d')} 급식\n\n{menu}")
         )
@@ -256,7 +256,7 @@ async def chat(request: Request):
         end = dt + timedelta(days=7)
         rows = get_schedule(start, end)
         if not rows:
-            return JSONResponse(kakao_text("해당 기간의 학사 일정을 찾지 못했어요."))
+            return JSONResponse(kakao_text("해당 기간의 학사 일정을 찾지 못했어요.\n(지금 NEIS 서버가 느린 것일 수 있어요.)"))
 
         lines = []
         for r in rows:
@@ -279,7 +279,7 @@ async def chat(request: Request):
         rows = get_class_timetable(dt, cls)
         if not rows:
             return JSONResponse(
-                kakao_text(f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 찾지 못했어요.")
+                kakao_text(f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 찾지 못했어요.\n(NEIS 응답 지연일 수 있어요.)")
             )
         rows_sorted = sorted(rows, key=lambda x: int(x.get("PERIO", "0")))
         lines = [f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in rows_sorted]
@@ -298,7 +298,7 @@ async def chat(request: Request):
         rows = get_grade_timetable(dt)
         if not rows:
             return JSONResponse(
-                kakao_text(f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 찾지 못했어요.")
+                kakao_text(f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 찾지 못했어요.\n(NEIS 응답 지연일 수 있어요.)")
             )
 
         # CLASS_NM 기준으로 묶기
