@@ -2,23 +2,24 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import os
 import aiohttp
-import asyncio
 from datetime import datetime, timedelta, date
 import re
 import openai
 
+
 # ======================
-# 한국시간 today
+# 한국 시간(today)
 # ======================
 def today_kst() -> date:
     return (datetime.utcnow() + timedelta(hours=9)).date()
+
 
 # ======================
 # 환경변수
 # ======================
 NEIS_API_KEY = os.getenv("NEIS_API_KEY")
-NEIS_OFFICE = os.getenv("NEIS_OFFICE")      # J10
-NEIS_SCHOOL = os.getenv("NEIS_SCHOOL")      # 7531467
+NEIS_OFFICE = os.getenv("NEIS_OFFICE")      # 예: J10
+NEIS_SCHOOL = os.getenv("NEIS_SCHOOL")      # 예: 7531467
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GRADE = int(os.getenv("GRADE", "2"))
 
@@ -80,11 +81,12 @@ def parse_date_kr(text: str, base: date | None = None) -> date | None:
 # 학년도/학기 계산
 # ======================
 def ay_sem(dt: date):
-    y, m = dt.year, dt.month
-    if m >= 3:             # 3~12월
+    y = dt.year
+    m = dt.month
+    if m >= 3:
         ay = y
         sem = "1" if m <= 8 else "2"
-    else:                  # 1~2월
+    else:
         ay = y - 1
         sem = "2"
     return str(ay), sem
@@ -100,17 +102,18 @@ async def neis_call(endpoint: str, params: dict):
     params["KEY"] = NEIS_API_KEY
     params["Type"] = "json"
 
-    async with aiohttp.ClientSession() as session:
-        try:
+    try:
+        async with aiohttp.ClientSession() as session:
             async with session.get(
                 NEIS_BASE + endpoint,
                 params=params,
                 timeout=TIMEOUT
             ) as r:
                 return await r.json()
-        except Exception as e:
-            print("❌ NEIS ERROR:", e)
-            return None
+
+    except Exception as e:
+        print("❌ NEIS ERROR:", e)
+        return None
 
 
 # ======================
@@ -124,8 +127,7 @@ async def get_meal(dt: date):
     })
     if not res or "mealServiceDietInfo" not in res:
         return None
-    row = res["mealServiceDietInfo"][1]["row"][0]
-    return row["DDISH_NM"].replace("<br/>", "\n")
+    return res["mealServiceDietInfo"][1]["row"][0]["DDISH_NM"].replace("<br/>", "\n")
 
 
 # ======================
@@ -144,7 +146,7 @@ async def get_schedule(start: date, end: date):
 
 
 # ======================
-# 시간표 (학년 전체)
+# 시간표 — 학년 전체
 # ======================
 async def get_grade_timetable(dt: date):
     ay, sem = ay_sem(dt)
@@ -164,7 +166,7 @@ async def get_grade_timetable(dt: date):
 
 
 # ======================
-# 시간표 (특정 반)
+# 시간표 — 특정 반
 # ======================
 async def get_class_timetable(dt: date, cls: int):
     ay, sem = ay_sem(dt)
@@ -192,13 +194,13 @@ async def ask_gpt(msg: str):
         res = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "너는 한국어로 대답하는 챗봇이다."},
+                {"role": "system", "content": "너는 한국어로 답변하는 챗봇이다."},
                 {"role": "user", "content": msg}
             ]
         )
         return res.choices[0].message.content
     except:
-        return "GPT 오류가 발생했어요."
+        return "GPT 처리 중 오류가 발생했어요."
 
 
 # ======================
@@ -210,17 +212,13 @@ async def chat(request: Request):
     utter = body["userRequest"]["utterance"].strip()
     print("🗣 utter:", utter)
 
-    # ======================
-    # GPT (/ask)
-    # ======================
+    # ===== GPT (/ask)
     if utter.startswith("/ask"):
         q = utter.replace("/ask", "").strip()
         ans = await ask_gpt(q)
         return JSONResponse(kakao_text(ans))
 
-    # ======================
-    # 급식
-    # ======================
+    # ===== 급식
     if "급식" in utter:
         dt = parse_date_kr(utter) or today_kst()
         menu = await get_meal(dt)
@@ -228,9 +226,7 @@ async def chat(request: Request):
             return JSONResponse(kakao_text("급식 정보가 없어요."))
         return JSONResponse(kakao_text(f"🍽 {dt.strftime('%m월 %d일')} 급식\n\n{menu}"))
 
-    # ======================
-    # 일정
-    # ======================
+    # ===== 일정
     if "일정" in utter:
         dt = parse_date_kr(utter) or today_kst()
         rows = await get_schedule(dt, dt + timedelta(days=7))
@@ -239,9 +235,7 @@ async def chat(request: Request):
         msg = "\n".join([f"{r['AA_YMD']} - {r['EVENT_NM']}" for r in rows])
         return JSONResponse(kakao_text(f"📅 일정\n\n{msg}"))
 
-    # ======================
-    # 특정 반 시간표
-    # ======================
+    # ===== 특정 반 시간표
     m = re.search(r"(\d)반.*시간표", utter)
     if m:
         cls = int(m.group(1))
@@ -252,11 +246,12 @@ async def chat(request: Request):
 
         rows = sorted(rows, key=lambda x: int(x["PERIO"]))
         msg = "\n".join([f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in rows])
-        return JSONResponse(kakao_text(f"📘 {GRADE}학년 {cls}반 {dt.strftime('%m월 %d일')}\n\n{msg}"))
 
-    # ======================
-    # 학년 전체 시간표
-    # ======================
+        return JSONResponse(kakao_text(
+            f"📘 {GRADE}학년 {cls}반\n{dt.strftime('%m월 %d일')}\n\n{msg}"
+        ))
+
+    # ===== 학년 전체 시간표
     if "시간표" in utter:
         dt = parse_date_kr(utter) or today_kst()
         rows = await get_grade_timetable(dt)
@@ -271,16 +266,14 @@ async def chat(request: Request):
         msg_list = []
         for cls, items in sorted(by_class.items(), key=lambda x: int(x[0])):
             items = sorted(items, key=lambda x: int(x["PERIO"]))
-            txt = "\n".join([f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in items])
-            msg_list.append(f"📘 {GRADE}학년 {cls}반\n{txt}")
+            text = "\n".join([f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in items])
+            msg_list.append(f"📘 {GRADE}학년 {cls}반\n{text}")
 
         final = f"📚 {GRADE}학년 전체 시간표 ({dt.strftime('%m월 %d일')})\n\n" + "\n\n".join(msg_list)
         return JSONResponse(kakao_text(final))
 
-    # ======================
-    # 기본 안내
-    # ======================
+    # ===== 기본 안내
     return JSONResponse(kakao_text(
-        "무엇을 도와드릴까요? 😊\n\n"
+        "무엇을 도와드릴까요?\n\n"
         "- 급식\n- 시간표\n- 일정\n- /ask 질문\n- /img 프롬프트"
     ))
