@@ -313,6 +313,16 @@ async def chat(request: Request):
             text = "\n".join([f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in items_sorted])
             parts.append(f"📘 {GRADE}학년 {cls}반\n{text}")
 
-        full_msg = f"📚 {GRADE}학년 전체 시간표 ({dt.
+        full_msg = f"📚 {GRADE}학년 전체 시간표 ({dt.strftime('%Y-%m-%d')})\n\n" + "\n\n".join(parts)
+        return JSONResponse(kakao_text(full_msg))
 
-::contentReference[oaicite:0]{index=0}
+    # ===== 6. 기본 안내
+    return JSONResponse(
+        kakao_text(
+            "무엇을 도와줄까? 😊\n\n"
+            "- 오늘 급식: \"급식\", \"오늘 급식\"\n"
+            "- 시간표: \"시간표\", \"11월 17일 시간표\", \"2학년 8반 시간표\"\n"
+            "- 일정: \"이번주 일정\", \"11월 일정\"\n"
+            "- 자유 질문: \"/ask 질문내용\""
+        )
+    )
