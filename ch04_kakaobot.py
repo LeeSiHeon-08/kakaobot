@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import os
 import requests
+import asyncio
 from datetime import datetime, timedelta, date
 import re
 import html
@@ -26,7 +27,7 @@ GRADE = int(os.getenv("GRADE", "2"))                # 2학년 전체용
 if not (NEIS_API_KEY and NEIS_OFFICE and NEIS_SCHOOL):
     raise ValueError("NEIS_API_KEY / NEIS_OFFICE / NEIS_SCHOOL 환경변수가 필요합니다.")
 
-openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+openai_client = openai.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 app = FastAPI()
 
 # ======================
@@ -198,6 +199,8 @@ def get_class_timetable(dt: date, cls: int):
 # GPT (/ask)
 # ======================
 def ask_gpt_sync(msg: str) -> str:
+    if not openai_client:
+        return "GPT API 키가 설정되어 있지 않아서 /ask 기능을 사용할 수 없어요."
     try:
         res = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -206,7 +209,8 @@ def ask_gpt_sync(msg: str) -> str:
                     "role": "system",
                     "content": (
                         "너는 한국어로 답변하는 챗봇이다. "
-                        "질문이 길면 핵심만 간결하게 정리해서 답해라."
+                        "질문이 길면 핵심만 간결하게 정리해서 답해라. "
+                        "누가 만들었냐고 물어보면 '이시헌'이라고 답해라."
                     ),
                 },
                 {"role": "user", "content": msg},
@@ -306,19 +310,9 @@ async def chat(request: Request):
         parts = []
         for cls, items in sorted(by_class.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0):
             items_sorted = sorted(items, key=lambda x: int(x.get("PERIO", "0")))
-            line = "\n".join([f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in items_sorted])
-            parts.append(f"📘 {GRADE}학년 {cls}반\n{line}")
+            text = "\n".join([f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in items_sorted])
+            parts.append(f"📘 {GRADE}학년 {cls}반\n{text}")
 
-        full_msg = f"📚 {GRADE}학년 전체 시간표 ({dt.strftime('%Y-%m-%d')})\n\n" + "\n\n".join(parts)
-        return JSONResponse(kakao_text(full_msg))
+        full_msg = f"📚 {GRADE}학년 전체 시간표 ({dt.
 
-    # ===== 6. 기본 안내
-    return JSONResponse(
-        kakao_text(
-            "무엇을 도와줄까? 😊\n\n"
-            "- 오늘 급식: \"급식\", \"오늘 급식\"\n"
-            "- 시간표: \"시간표\", \"11월 17일 시간표\", \"2학년 8반 시간표\"\n"
-            "- 일정: \"이번주 일정\", \"11월 일정\"\n"
-            "- 자유 질문: \"/ask 질문내용\""
-        )
-    )
+::contentReference[oaicite:0]{index=0}
