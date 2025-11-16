@@ -19,12 +19,12 @@ try:
 except Exception:
     pass
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # 선택 (없어도 동작)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # 선택
 NEIS_API_KEY   = os.getenv("NEIS_API_KEY")
 NEIS_OFFICE    = os.getenv("NEIS_OFFICE")     # 경기도교육청: J10
 NEIS_SCHOOL    = os.getenv("NEIS_SCHUL") or os.getenv("NEIS_SCHOOL")  # 치동고: 7531467
 
-# 기본값(요청 날짜 기준으로 ay_sem_for가 다시 계산함)
+# 기본값 (요청 날짜 기준으로 ay_sem_for로 다시 계산)
 AY_DEFAULT    = os.getenv("AY",    "2025")
 SEM_DEFAULT   = os.getenv("SEM",   "2")
 GRADE         = os.getenv("GRADE", "2")
@@ -46,7 +46,7 @@ if USE_OPENAI:
 MAX_TOKENS  = 120
 TEMPERATURE = 0.4
 
-# ------------------ FastAPI 앱 ------------------
+# ------------------ FastAPI ------------------
 app = FastAPI(title="Kakao School Bot")
 
 # ------------------ Kakao 응답 헬퍼 ------------------
@@ -93,12 +93,12 @@ def parse_date_kr(text: str, base: Optional[date] = None) -> Optional[date]:
         if k in t:
             return base + timedelta(days=d)
 
-    # 요일(이번 주 기준)
+    # 요일(이번 주)
     for wd in WEEKDAY_MAP.keys():
         if f"{wd}요일" in t:
             return _this_week_date_for(wd, base)
 
-    # "11월 17일" 형식
+    # "11월 17일"
     m = re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", t)
     if m:
         mm, dd = int(m.group(1)), int(m.group(2))
@@ -107,7 +107,7 @@ def parse_date_kr(text: str, base: Optional[date] = None) -> Optional[date]:
         except Exception:
             return None
 
-    # "2025-11-17" 형식
+    # "2025-11-17"
     m = re.search(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", t)
     if m:
         yy, mm, dd = map(int, m.groups())
@@ -116,7 +116,7 @@ def parse_date_kr(text: str, base: Optional[date] = None) -> Optional[date]:
         except Exception:
             return None
 
-    # "20251117" 형식
+    # "20251117"
     m = re.search(r"\b(20\d{2})(\d{2})(\d{2})\b", t)
     if m:
         yy, mm, dd = map(int, m.groups())
@@ -153,7 +153,7 @@ NEIS_TIMEOUT = 6.0
 _session = requests.Session()
 _retries = Retry(
     total=3,
-    backoff_factor=0.6,  # 0.6, 1.2, 1.8초
+    backoff_factor=0.6,
     status_forcelist=[429, 500, 502, 503, 504],
     allowed_methods=["GET"],
 )
@@ -198,8 +198,8 @@ def get_meal(ymd: str) -> str:
     return clean_meal(rows[0].get("DDISH_NM", "")) or "급식 정보가 없습니다."
 
 # ------------------ 시간표 (반 / 학년 병렬) ------------------
-CLASS_RANGE   = [f"{i:02d}" for i in range(1, 16)]  # 01~15반 기준
-GRADE_DEADLINE = 2.4  # 전체 학년 수집 데드라인(초)
+CLASS_RANGE    = [f"{i:02d}" for i in range(1, 16)]  # 01~15반
+GRADE_DEADLINE = 2.4  # 학년 전체 수집 데드라인(초)
 
 def get_timetable_class(
     ymd: str,
@@ -264,7 +264,7 @@ def get_timetable_grade_parallel(
                 if (datetime.now() - start).total_seconds() > GRADE_DEADLINE:
                     break
         except concurrent.futures.TimeoutError:
-            # 전체 데드라인 초과 → 지금까지 온 것만 사용
+            # 데드라인 넘어가면 지금까지 온 것만 사용
             pass
 
     return grouped
@@ -378,6 +378,16 @@ async def chat(request: Request):
             "시간표" in utter and "학년" not in utter and "반" not in utter
         ):
             dt = parse_date_kr(utter) or date.today()
+            today = date.today()
+            # 미래 날짜는 NEIS 안 부르고 안내만
+            if dt > today:
+                return JSONResponse(
+                    kakao_text(
+                        f"{dt.strftime('%Y-%m-%d')} 시간표는 아직 나이스에 등록되지 않았을 수 있어서\n"
+                        "당일 또는 지난 날짜 위주로만 조회하고 있어.🙏",
+                        quick=True,
+                    )
+                )
             if dt.weekday() >= 5:
                 return JSONResponse(
                     kakao_text(
@@ -385,23 +395,17 @@ async def chat(request: Request):
                         quick=True,
                     )
                 )
-            hint = ""
-            if dt > date.today():
-                hint = "\n(요청일 정보가 아직 등록되지 않았을 수 있어요.)"
             ay_dyn, sem_dyn = ay_sem_for(dt)
             ymd = dt.strftime("%Y%m%d")
-
             grouped = get_timetable_grade_parallel(ymd, ay_dyn, sem_dyn, GRADE)
-
             if not grouped:
                 return JSONResponse(
                     kakao_text(
-                        f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 지금은 받아오지 못했어요 😢{hint}\n"
+                        f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 지금은 받아오지 못했어요 😢\n"
                         "잠시 후 다시 시도해 주세요.",
                         quick=True,
                     )
                 )
-
             order = sorted(
                 grouped.keys(),
                 key=lambda x: int(re.sub(r"[^0-9]", "", x) or "0"),
@@ -410,13 +414,11 @@ async def chat(request: Request):
             for cls in order:
                 items = " / ".join([f"{p}교시 {s}" for p, s in grouped[cls]])
                 blocks.append(f"{cls}반) {items}")
-
             suffix = ""
             if len(order) < len(CLASS_RANGE):
                 missing = ", ".join([c for c in CLASS_RANGE if c not in grouped])
                 if missing:
                     suffix = f"\n\n(일부 반 응답 지연: {missing}반 — 잠시 후 다시 시도해 주세요)"
-
             text = (
                 f"⏰ {dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표"
                 f"(수집 범위: {len(order)}/{len(CLASS_RANGE)}반)\n"
@@ -430,6 +432,15 @@ async def chat(request: Request):
             m = re.search(rf"{GRADE}학년\s*(\d+)\s*반", utter)
             cls = f"{int(m.group(1)):02d}" if m else CLASS_DEFAULT
             dt = parse_date_kr(utter) or date.today()
+            today = date.today()
+            if dt > today:
+                return JSONResponse(
+                    kakao_text(
+                        f"{dt.strftime('%Y-%m-%d')} 시간표는 아직 나이스에 등록되지 않았을 수 있어서\n"
+                        "당일 또는 지난 날짜 위주로만 조회하고 있어.🙏",
+                        quick=True,
+                    )
+                )
             if dt.weekday() >= 5:
                 return JSONResponse(
                     kakao_text(
@@ -437,16 +448,13 @@ async def chat(request: Request):
                         quick=True,
                     )
                 )
-            hint = ""
-            if dt > date.today():
-                hint = "\n(요청일 정보가 아직 등록되지 않았을 수 있어요.)"
             ay_dyn, sem_dyn = ay_sem_for(dt)
             ymd = dt.strftime("%Y%m%d")
             rows = get_timetable_class(ymd, ay_dyn, sem_dyn, GRADE, cls)
             if not rows:
                 return JSONResponse(
                     kakao_text(
-                        f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 받지 못했어요 😢{hint}",
+                        f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 받지 못했어요 😢",
                         quick=True,
                     )
                 )
@@ -507,6 +515,15 @@ async def chat(request: Request):
             # /ask + 학년 전체 시간표
             if "시간표" in prompt and "학년" not in prompt and "반" not in prompt:
                 dt = parse_date_kr(prompt) or date.today()
+                today = date.today()
+                if dt > today:
+                    return JSONResponse(
+                        kakao_text(
+                            f"{dt.strftime('%Y-%m-%d')} 시간표는 아직 나이스에 등록되지 않았을 수 있어서\n"
+                            "당일 또는 지난 날짜 위주로만 조회하고 있어.🙏",
+                            quick=True,
+                        )
+                    )
                 if dt.weekday() >= 5:
                     return JSONResponse(
                         kakao_text(
@@ -514,16 +531,13 @@ async def chat(request: Request):
                             quick=True,
                         )
                     )
-                hint = ""
-                if dt > date.today():
-                    hint = "\n(요청일 정보가 아직 등록되지 않았을 수 있어요.)"
                 ay_dyn, sem_dyn = ay_sem_for(dt)
                 ymd = dt.strftime("%Y%m%d")
                 grouped = get_timetable_grade_parallel(ymd, ay_dyn, sem_dyn, GRADE)
                 if not grouped:
                     return JSONResponse(
                         kakao_text(
-                            f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 지금은 받아오지 못했어요 😢{hint}",
+                            f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 지금은 받아오지 못했어요 😢",
                             quick=True,
                         )
                     )
@@ -548,6 +562,15 @@ async def chat(request: Request):
                 m = re.search(rf"{GRADE}학년\s*(\d+)\s*반", prompt)
                 cls = f"{int(m.group(1)):02d}" if m else CLASS_DEFAULT
                 dt = parse_date_kr(prompt) or date.today()
+                today = date.today()
+                if dt > today:
+                    return JSONResponse(
+                        kakao_text(
+                            f"{dt.strftime('%Y-%m-%d')} 시간표는 아직 나이스에 등록되지 않았을 수 있어서\n"
+                            "당일 또는 지난 날짜 위주로만 조회하고 있어.🙏",
+                            quick=True,
+                        )
+                    )
                 if dt.weekday() >= 5:
                     return JSONResponse(
                         kakao_text(
@@ -555,16 +578,13 @@ async def chat(request: Request):
                             quick=True,
                         )
                     )
-                hint = ""
-                if dt > date.today():
-                    hint = "\n(요청일 정보가 아직 등록되지 않았을 수 있어요.)"
                 ay_dyn, sem_dyn = ay_sem_for(dt)
                 ymd = dt.strftime("%Y%m%d")
                 rows = get_timetable_class(ymd, ay_dyn, sem_dyn, GRADE, cls)
                 if not rows:
                     return JSONResponse(
                         kakao_text(
-                            f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 받지 못했어요 😢{hint}",
+                            f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 받지 못했어요 😢",
                             quick=True,
                         )
                     )
@@ -614,7 +634,7 @@ async def chat(request: Request):
                     )
                 )
 
-            # 그 외 /ask → GPT
+            # 나머지 /ask → GPT
             if USE_OPENAI:
                 try:
                     loop = asyncio.get_running_loop()
