@@ -48,10 +48,33 @@ def kakao_text(msg: str):
         }
     }
 
+def timeover_response():
+    """생각 중일 때 바로 돌려주는 응답"""
+    return {
+        "version": "2.0",
+        "template": {
+            "outputs": [
+                {
+                    "simpleText": {
+                        "text": "아직 제가 생각이 끝나지 않았어요 🧠\n"
+                                "잠시 후 아래 말풍선을 눌러 주세요 👇"
+                    }
+                }
+            ],
+            "quickReplies": [
+                {
+                    "action": "message",
+                    "label": "생각 다 끝났나요? 🙋",
+                    "messageText": "생각 다 끝났나요?"
+                }
+            ],
+        },
+    }
+
 # ======================
 # 날짜 파싱
 # ======================
-def parse_date_kr(text: str, base: date = None):
+def parse_date_kr(text: str, base: date | None = None) -> date | None:
     base = base or today_kst()
     t = (text or "").strip()
 
@@ -95,10 +118,10 @@ def ay_sem(dt: date):
     return str(ay), sem
 
 # ======================
-# NEIS 공통 요청 (requests 사용)
+# NEIS 공통 요청 (백그라운드에서만 호출)
 # ======================
 NEIS_BASE = "https://open.neis.go.kr/hub"
-NEIS_TIMEOUT = 2.0  # ★ 카카오 3초 제한 때문에 여유를 두기 위해 2초로 설정
+NEIS_TIMEOUT = 6.0  # 카카오 제한과 무관. 백그라운드에서 충분히 기다릴 수 있게 여유롭게.
 
 def neis_get(endpoint: str, extra: dict):
     params = {
@@ -133,7 +156,7 @@ def clean_meal(text: str) -> str:
     t = re.sub(r"\n\s+", "\n", t)
     return t.strip()
 
-def get_meal(dt: date) -> str | None:
+def get_meal_sync(dt: date):
     rows = neis_get(
         "mealServiceDietInfo",
         {
@@ -149,7 +172,7 @@ def get_meal(dt: date) -> str | None:
 # ======================
 # 일정
 # ======================
-def get_schedule(start: date, end: date):
+def get_schedule_sync(start: date, end: date):
     rows = neis_get(
         "SchoolSchedule",
         {
@@ -164,7 +187,7 @@ def get_schedule(start: date, end: date):
 # ======================
 # 시간표 (학년 전체 / 특정 반)
 # ======================
-def get_grade_timetable(dt: date):
+def get_grade_timetable_sync(dt: date):
     ay, sem = ay_sem(dt)
     rows = neis_get(
         "hisTimetable",
@@ -179,7 +202,7 @@ def get_grade_timetable(dt: date):
     )
     return rows or []
 
-def get_class_timetable(dt: date, cls: int):
+def get_class_timetable_sync(dt: date, cls: int):
     ay, sem = ay_sem(dt)
     rows = neis_get(
         "hisTimetable",
@@ -224,105 +247,166 @@ def ask_gpt_sync(msg: str) -> str:
         return "GPT 처리 중 오류가 발생했어요. 잠시 후 다시 시도해줘."
 
 # ======================
+# 결과 캐시 (세션별)
+# ======================
+result_cache = {}
+cache_lock = asyncio.Lock()
+
+# ======================
+# 실제 응답 만드는 함수들 (동기, 스레드에서 실행)
+# ======================
+def build_meal_response(utter: str):
+    dt = parse_date_kr(utter) or today_kst()
+    menu = get_meal_sync(dt)
+    if not menu:
+        return kakao_text("해당 날짜의 급식 정보를 찾지 못했어요.\n(NEIS 서버가 느리거나 데이터가 없을 수 있어요.)")
+    return kakao_text(f"🍽 {dt.strftime('%Y-%m-%d')} 급식\n\n{menu}")
+
+def build_schedule_response(utter: str):
+    dt = parse_date_kr(utter) or today_kst()
+    start = dt
+    end = dt + timedelta(days=7)
+    rows = get_schedule_sync(start, end)
+    if not rows:
+        return kakao_text("해당 기간의 학사 일정을 찾지 못했어요.\n(NEIS 서버가 느리거나 데이터가 없을 수 있어요.)")
+    lines = []
+    for r in rows:
+        ymd = r.get("AA_YMD", "")
+        name = r.get("EVENT_NM", "")
+        desc = r.get("EVENT_CNTNT", "")
+        if len(ymd) == 8:
+            d_str = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}"
+        else:
+            d_str = ymd
+        if desc:
+            lines.append(f"{d_str} - {name} ({desc})")
+        else:
+            lines.append(f"{d_str} - {name}")
+    msg = "📅 학사 일정\n\n" + "\n".join(lines)
+    return kakao_text(msg)
+
+def build_timetable_response(utter: str):
+    dt = parse_date_kr(utter) or today_kst()
+
+    # 특정 반: "8반 시간표", "2학년 8반 시간표" 등
+    m = re.search(r"(\d+)\s*반", utter)
+    if m:
+        cls = int(m.group(1))
+        rows = get_class_timetable_sync(dt, cls)
+        if not rows:
+            return kakao_text(
+                f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 찾지 못했어요.\n"
+                "(NEIS 응답 지연이거나 시간표 데이터가 없을 수 있어요.)"
+            )
+        rows_sorted = sorted(rows, key=lambda x: int(x.get("PERIO", "0")))
+        lines = [f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in rows_sorted]
+        msg = f"📘 {GRADE}학년 {cls}반 {dt.strftime('%Y-%m-%d')} 시간표\n\n" + "\n".join(lines)
+        return kakao_text(msg)
+
+    # 학년 전체 시간표
+    if dt.weekday() >= 5:
+        return kakao_text(f"{dt.strftime('%Y-%m-%d')}은(는) 주말이라 시간표가 없을 수 있어요.")
+
+    rows = get_grade_timetable_sync(dt)
+    if not rows:
+        return kakao_text(
+            f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 찾지 못했어요.\n"
+            "(NEIS 응답 지연이거나 시간표 데이터가 없을 수 있어요.)"
+        )
+
+    by_class = {}
+    for r in rows:
+        cls = r.get("CLASS_NM", "")
+        by_class.setdefault(cls, []).append(r)
+
+    parts = []
+    for cls, items in sorted(by_class.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0):
+        items_sorted = sorted(items, key=lambda x: int(x.get("PERIO", "0")))
+        text = "\n".join([f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in items_sorted])
+        parts.append(f"📘 {GRADE}학년 {cls}반\n{text}")
+
+    full_msg = f"📚 {GRADE}학년 전체 시간표 ({dt.strftime('%Y-%m-%d')})\n\n" + "\n\n".join(parts)
+    return kakao_text(full_msg)
+
+def build_ask_response(prompt: str):
+    ans = ask_gpt_sync(prompt)
+    return kakao_text(ans)
+
+# ======================
+# 백그라운드 워커
+# ======================
+async def background_worker(session_id: str, kind: str, payload: str):
+    loop = asyncio.get_running_loop()
+    try:
+        if kind == "ask":
+            resp = await loop.run_in_executor(None, build_ask_response, payload)
+        elif kind == "meal":
+            resp = await loop.run_in_executor(None, build_meal_response, payload)
+        elif kind == "schedule":
+            resp = await loop.run_in_executor(None, build_schedule_response, payload)
+        elif kind == "timetable":
+            resp = await loop.run_in_executor(None, build_timetable_response, payload)
+        else:
+            resp = kakao_text("알 수 없는 작업 유형입니다.")
+    except Exception as e:
+        print("❌ background_worker error:", e)
+        resp = kakao_text("서버 처리 중 오류가 발생했어요. 잠시 후 다시 시도해줘.")
+
+    async with cache_lock:
+        result_cache[session_id] = resp
+
+# ======================
 # FastAPI 엔드포인트
 # ======================
 @app.post("/chat/")
 async def chat(request: Request):
     body = await request.json()
-    utter = (body.get("userRequest", {}).get("utterance") or "").strip()
-    print("🗣 utter:", utter)
+    user_req = body.get("userRequest", {})
+    utter = (user_req.get("utterance") or "").strip()
+    user_info = user_req.get("user", {})
+    session_id = user_info.get("id", "anonymous")
 
-    # ===== 1. /ask (GPT)
+    print("🗣 utter:", utter, "/ session:", session_id)
+
+    # 1. /ask -> GPT 비동기 처리
     if utter.startswith("/ask"):
-        q = utter.replace("/ask", "", 1).strip()
-        loop = asyncio.get_running_loop()
-        ans = await loop.run_in_executor(None, ask_gpt_sync, q)
-        return JSONResponse(kakao_text(ans))
+        prompt = utter.replace("/ask", "", 1).strip()
+        asyncio.create_task(background_worker(session_id, "ask", prompt))
+        return JSONResponse(timeover_response())
 
-    # ===== 2. 급식
+    # 2. 급식
     if "급식" in utter:
-        dt = parse_date_kr(utter) or today_kst()
-        menu = get_meal(dt)
-        if not menu:
-            return JSONResponse(kakao_text("해당 날짜의 급식 정보를 찾지 못했어요.\n(지금 NEIS 서버가 느리거나, 급식 데이터가 없을 수 있어요.)"))
-        return JSONResponse(
-            kakao_text(f"🍽 {dt.strftime('%Y-%m-%d')} 급식\n\n{menu}")
-        )
+        asyncio.create_task(background_worker(session_id, "meal", utter))
+        return JSONResponse(timeover_response())
 
-    # ===== 3. 일정
+    # 3. 일정
     if "일정" in utter:
-        dt = parse_date_kr(utter) or today_kst()
-        start = dt
-        end = dt + timedelta(days=7)
-        rows = get_schedule(start, end)
-        if not rows:
-            return JSONResponse(kakao_text("해당 기간의 학사 일정을 찾지 못했어요.\n(지금 NEIS 서버가 느린 것일 수 있어요.)"))
+        asyncio.create_task(background_worker(session_id, "schedule", utter))
+        return JSONResponse(timeover_response())
 
-        lines = []
-        for r in rows:
-            ymd = r.get("AA_YMD", "")
-            name = r.get("EVENT_NM", "")
-            desc = r.get("EVENT_CNTNT", "")
-            d_str = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}" if len(ymd) == 8 else ymd
-            if desc:
-                lines.append(f"{d_str} - {name} ({desc})")
-            else:
-                lines.append(f"{d_str} - {name}")
-        msg = "📅 학사 일정\n\n" + "\n".join(lines)
-        return JSONResponse(kakao_text(msg))
-
-    # ===== 4. 특정 반 시간표 (예: 2학년 8반 시간표 / 8반 시간표)
-    m = re.search(r"(\d+)\s*반.*시간표", utter)
-    if m:
-        cls = int(m.group(1))
-        dt = parse_date_kr(utter) or today_kst()
-        rows = get_class_timetable(dt, cls)
-        if not rows:
-            return JSONResponse(
-                kakao_text(f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 찾지 못했어요.\n(NEIS 응답 지연일 수 있어요.)")
-            )
-        rows_sorted = sorted(rows, key=lambda x: int(x.get("PERIO", "0")))
-        lines = [f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in rows_sorted]
-        msg = f"📘 {GRADE}학년 {cls}반 {dt.strftime('%Y-%m-%d')} 시간표\n\n" + "\n".join(lines)
-        return JSONResponse(kakao_text(msg))
-
-    # ===== 5. 학년 전체 시간표 (예: 시간표 / 오늘 시간표 / 11월 17일 시간표)
+    # 4. 시간표
     if "시간표" in utter:
-        dt = parse_date_kr(utter) or today_kst()
-        # 주말 안내
-        if dt.weekday() >= 5:
+        asyncio.create_task(background_worker(session_id, "timetable", utter))
+        return JSONResponse(timeover_response())
+
+    # 5. "생각 다 끝났나요?" -> 캐시에서 결과 꺼내기
+    if "생각 다 끝났나요" in utter:
+        async with cache_lock:
+            resp = result_cache.pop(session_id, None)
+        if resp:
+            return JSONResponse(resp)
+        else:
             return JSONResponse(
-                kakao_text(f"{dt.strftime('%Y-%m-%d')}은(는) 주말이라 시간표가 없을 수 있어요.")
+                kakao_text("아직 결과가 준비되지 않았어요 😢\n조금만 더 기다렸다가 다시 눌러줘.")
             )
 
-        rows = get_grade_timetable(dt)
-        if not rows:
-            return JSONResponse(
-                kakao_text(f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 찾지 못했어요.\n(NEIS 응답 지연일 수 있어요.)")
-            )
-
-        # CLASS_NM 기준으로 묶기
-        by_class = {}
-        for r in rows:
-            cls = r.get("CLASS_NM", "")
-            by_class.setdefault(cls, []).append(r)
-
-        parts = []
-        for cls, items in sorted(by_class.items(), key=lambda x: int(x[0]) if x[0].isdigit() else 0):
-            items_sorted = sorted(items, key=lambda x: int(x.get("PERIO", "0")))
-            text = "\n".join([f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in items_sorted])
-            parts.append(f"📘 {GRADE}학년 {cls}반\n{text}")
-
-        full_msg = f"📚 {GRADE}학년 전체 시간표 ({dt.strftime('%Y-%m-%d')})\n\n" + "\n\n".join(parts)
-        return JSONResponse(kakao_text(full_msg))
-
-    # ===== 6. 기본 안내
+    # 6. 기본 안내
     return JSONResponse(
         kakao_text(
             "무엇을 도와줄까? 😊\n\n"
-            "- 오늘 급식: \"급식\", \"오늘 급식\"\n"
-            "- 시간표: \"시간표\", \"11월 17일 시간표\", \"2학년 8반 시간표\"\n"
-            "- 일정: \"이번주 일정\", \"11월 일정\"\n"
+            "- 급식: \"급식\", \"내일 급식\", \"11월 20일 급식\"\n"
+            "- 시간표: \"시간표\", \"내일 시간표\", \"2학년 8반 시간표\"\n"
+            "- 일정: \"일정\", \"이번주 일정\"\n"
             "- 자유 질문: \"/ask 질문내용\""
         )
     )
