@@ -125,7 +125,7 @@ def ay_sem(dt: date):
 # ======================
 NEIS_BASE = "https://open.neis.go.kr/hub"
 # 사용자가 기다리는 시간을 고려해 타임아웃을 적절히 설정 (여기서 5초 넘으면 어차피 백그라운드 처리됨)
-NEIS_TIMEOUT = 5.0 
+NEIS_TIMEOUT = 10.0 
 
 def neis_get(endpoint: str, extra: dict):
     params = {
