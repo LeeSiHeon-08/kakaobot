@@ -406,7 +406,7 @@ async def chat(request: Request):
         try:
             # 4.0초 기다려봄 (카카오톡 5초 제한 대비 안전장치)
             # shield: 타임아웃이 발생해도 task 자체는 캔슬되지 않게 보호
-            response = await asyncio.wait_for(asyncio.shield(task), timeout=4.0)
+            response = await asyncio.wait_for(asyncio.shield(task), timeout=3.0)
             return JSONResponse(response)
         
         except asyncio.TimeoutError:
