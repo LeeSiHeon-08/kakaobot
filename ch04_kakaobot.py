@@ -16,7 +16,7 @@ def today_kst() -> date:
     return (datetime.utcnow() + timedelta(hours=9)).date()
 
 # ======================
-# 환경변수
+# 환경변수 설정
 # ======================
 NEIS_API_KEY = os.getenv("NEIS_API_KEY")
 NEIS_OFFICE = os.getenv("NEIS_OFFICE")              # 예: J10
@@ -24,8 +24,11 @@ NEIS_SCHOOL = os.getenv("NEIS_SCHUL") or os.getenv("NEIS_SCHOOL")  # 예: 753146
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GRADE = int(os.getenv("GRADE", "2"))                # 2학년 전체용
 
+# 환경변수 체크
 if not (NEIS_API_KEY and NEIS_OFFICE and NEIS_SCHOOL):
-    raise ValueError("NEIS_API_KEY / NEIS_OFFICE / NEIS_SCHOOL 환경변수가 필요합니다.")
+    # 로컬 테스트용 하드코딩이 필요하면 여기서 설정하거나, raise를 주석 처리하세요.
+    # raise ValueError("NEIS_API_KEY / NEIS_OFFICE / NEIS_SCHOOL 환경변수가 필요합니다.")
+    pass
 
 openai_client = openai.OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 app = FastAPI()
@@ -49,7 +52,7 @@ def kakao_text(msg: str):
     }
 
 def timeover_response():
-    """생각 중일 때 바로 돌려주는 응답"""
+    """생각 중일 때(4초 초과) 보여주는 응답"""
     return {
         "version": "2.0",
         "template": {
@@ -72,7 +75,7 @@ def timeover_response():
     }
 
 # ======================
-# 날짜 파싱
+# 날짜 파싱 로직
 # ======================
 def parse_date_kr(text: str, base: date | None = None) -> date | None:
     base = base or today_kst()
@@ -118,10 +121,11 @@ def ay_sem(dt: date):
     return str(ay), sem
 
 # ======================
-# NEIS 공통 요청 (백그라운드에서만 호출)
+# NEIS 데이터 요청 (동기 함수)
 # ======================
 NEIS_BASE = "https://open.neis.go.kr/hub"
-NEIS_TIMEOUT = 6.0  # 카카오 제한과 무관. 백그라운드에서 충분히 기다릴 수 있게 여유롭게.
+# 사용자가 기다리는 시간을 고려해 타임아웃을 적절히 설정 (여기서 5초 넘으면 어차피 백그라운드 처리됨)
+NEIS_TIMEOUT = 5.0 
 
 def neis_get(endpoint: str, extra: dict):
     params = {
@@ -150,8 +154,7 @@ def clean_meal(text: str) -> str:
     if not text:
         return ""
     t = html.unescape(text.replace("<br/>", "\n"))
-    # 알레르기 번호 제거 (예: (1.2.5.6.))
-    t = re.sub(r"\(\d+(\.\d+)*\)", "", t)
+    t = re.sub(r"\(\d+(\.\d+)*\)", "", t) # 알레르기 번호 제거
     t = re.sub(r"[ \t]+", " ", t)
     t = re.sub(r"\n\s+", "\n", t)
     return t.strip()
@@ -185,7 +188,7 @@ def get_schedule_sync(start: date, end: date):
     return rows or []
 
 # ======================
-# 시간표 (학년 전체 / 특정 반)
+# 시간표
 # ======================
 def get_grade_timetable_sync(dt: date):
     ay, sem = ay_sem(dt)
@@ -253,7 +256,7 @@ result_cache = {}
 cache_lock = asyncio.Lock()
 
 # ======================
-# 실제 응답 만드는 함수들 (동기, 스레드에서 실행)
+# 응답 생성 함수들 (동기 실행 - ThreadPool에서 돔)
 # ======================
 def build_meal_response(utter: str):
     dt = parse_date_kr(utter) or today_kst()
@@ -268,7 +271,7 @@ def build_schedule_response(utter: str):
     end = dt + timedelta(days=7)
     rows = get_schedule_sync(start, end)
     if not rows:
-        return kakao_text("해당 기간의 학사 일정을 찾지 못했어요.\n(NEIS 서버가 느리거나 데이터가 없을 수 있어요.)")
+        return kakao_text("해당 기간의 학사 일정을 찾지 못했어요.")
     lines = []
     for r in rows:
         ymd = r.get("AA_YMD", "")
@@ -288,31 +291,27 @@ def build_schedule_response(utter: str):
 def build_timetable_response(utter: str):
     dt = parse_date_kr(utter) or today_kst()
 
-    # 특정 반: "8반 시간표", "2학년 8반 시간표" 등
+    # 특정 반: "8반 시간표"
     m = re.search(r"(\d+)\s*반", utter)
     if m:
         cls = int(m.group(1))
         rows = get_class_timetable_sync(dt, cls)
         if not rows:
             return kakao_text(
-                f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 찾지 못했어요.\n"
-                "(NEIS 응답 지연이거나 시간표 데이터가 없을 수 있어요.)"
+                f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 {cls}반 시간표를 찾지 못했어요."
             )
         rows_sorted = sorted(rows, key=lambda x: int(x.get("PERIO", "0")))
         lines = [f"{r['PERIO']}교시 - {r['ITRT_CNTNT']}" for r in rows_sorted]
         msg = f"📘 {GRADE}학년 {cls}반 {dt.strftime('%Y-%m-%d')} 시간표\n\n" + "\n".join(lines)
         return kakao_text(msg)
 
-    # 학년 전체 시간표
+    # 학년 전체
     if dt.weekday() >= 5:
         return kakao_text(f"{dt.strftime('%Y-%m-%d')}은(는) 주말이라 시간표가 없을 수 있어요.")
 
     rows = get_grade_timetable_sync(dt)
     if not rows:
-        return kakao_text(
-            f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 찾지 못했어요.\n"
-            "(NEIS 응답 지연이거나 시간표 데이터가 없을 수 있어요.)"
-        )
+        return kakao_text(f"{dt.strftime('%Y-%m-%d')} {GRADE}학년 시간표를 찾지 못했어요.")
 
     by_class = {}
     for r in rows:
@@ -333,27 +332,26 @@ def build_ask_response(prompt: str):
     return kakao_text(ans)
 
 # ======================
-# 백그라운드 워커
+# 통합 처리기 (비동기 Wrapper)
 # ======================
-async def background_worker(session_id: str, kind: str, payload: str):
+async def process_request(session_id: str, func, *args):
+    """
+    func(*args)를 스레드풀에서 실행하고, 결과를 리턴함과 동시에
+    캐시(result_cache)에도 저장합니다.
+    """
     loop = asyncio.get_running_loop()
     try:
-        if kind == "ask":
-            resp = await loop.run_in_executor(None, build_ask_response, payload)
-        elif kind == "meal":
-            resp = await loop.run_in_executor(None, build_meal_response, payload)
-        elif kind == "schedule":
-            resp = await loop.run_in_executor(None, build_schedule_response, payload)
-        elif kind == "timetable":
-            resp = await loop.run_in_executor(None, build_timetable_response, payload)
-        else:
-            resp = kakao_text("알 수 없는 작업 유형입니다.")
+        # 동기 함수를 비동기로 실행
+        resp = await loop.run_in_executor(None, func, *args)
     except Exception as e:
-        print("❌ background_worker error:", e)
-        resp = kakao_text("서버 처리 중 오류가 발생했어요. 잠시 후 다시 시도해줘.")
+        print(f"❌ Process error: {e}")
+        resp = kakao_text("처리 중 오류가 발생했어요.")
 
+    # 결과 캐싱 (나중에 '생각 다 끝났나요?' 요청 시 사용)
     async with cache_lock:
         result_cache[session_id] = resp
+    
+    return resp
 
 # ======================
 # FastAPI 엔드포인트
@@ -366,41 +364,55 @@ async def chat(request: Request):
     user_info = user_req.get("user", {})
     session_id = user_info.get("id", "anonymous")
 
-    print("🗣 utter:", utter, "/ session:", session_id)
+    print(f"🗣 [{session_id}] utter: {utter}")
 
-    # 1. /ask -> GPT 비동기 처리
+    # 1. 실행할 함수 선택
+    target_func = None
+    args = []
+
     if utter.startswith("/ask"):
         prompt = utter.replace("/ask", "", 1).strip()
-        asyncio.create_task(background_worker(session_id, "ask", prompt))
-        return JSONResponse(timeover_response())
-
-    # 2. 급식
-    if "급식" in utter:
-        asyncio.create_task(background_worker(session_id, "meal", utter))
-        return JSONResponse(timeover_response())
-
-    # 3. 일정
-    if "일정" in utter:
-        asyncio.create_task(background_worker(session_id, "schedule", utter))
-        return JSONResponse(timeover_response())
-
-    # 4. 시간표
-    if "시간표" in utter:
-        asyncio.create_task(background_worker(session_id, "timetable", utter))
-        return JSONResponse(timeover_response())
-
-    # 5. "생각 다 끝났나요?" -> 캐시에서 결과 꺼내기
-    if "생각 다 끝났나요" in utter:
+        target_func = build_ask_response
+        args = [prompt]
+    elif "급식" in utter:
+        target_func = build_meal_response
+        args = [utter]
+    elif "일정" in utter:
+        target_func = build_schedule_response
+        args = [utter]
+    elif "시간표" in utter:
+        target_func = build_timetable_response
+        args = [utter]
+    
+    # 2. "생각 다 끝났나요?" 처리 (캐시 조회)
+    elif "생각 다 끝났나요" in utter:
         async with cache_lock:
             resp = result_cache.pop(session_id, None)
         if resp:
             return JSONResponse(resp)
         else:
             return JSONResponse(
-                kakao_text("아직 결과가 준비되지 않았어요 😢\n조금만 더 기다렸다가 다시 눌러줘.")
+                kakao_text("아직 결과가 준비되지 않았어요 😢\n조금만 더 기다렸다가 다시 눌러주세요.")
             )
 
-    # 6. 기본 안내
+    # 3. 실제 로직 실행 (Smart Waiting 적용)
+    if target_func:
+        # 작업을 생성 (백그라운드에서도 계속 돌아야 하므로 Task로 만듦)
+        task = asyncio.create_task(process_request(session_id, target_func, *args))
+        
+        try:
+            # 4.0초 기다려봄 (카카오톡 5초 제한 대비 안전장치)
+            # shield: 타임아웃이 발생해도 task 자체는 캔슬되지 않게 보호
+            response = await asyncio.wait_for(asyncio.shield(task), timeout=4.0)
+            return JSONResponse(response)
+        
+        except asyncio.TimeoutError:
+            # 4초가 지남 -> "생각 중..." 메시지 리턴
+            # task는 백그라운드에서 계속 돌고 있으며, 끝나면 캐시에 저장됨
+            print(f"⏳ Timeout triggered for {session_id}")
+            return JSONResponse(timeover_response())
+
+    # 4. 기본 안내
     return JSONResponse(
         kakao_text(
             "무엇을 도와줄까? 😊\n\n"
